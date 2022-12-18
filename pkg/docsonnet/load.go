@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/google/go-jsonnet"
 )
@@ -18,6 +18,17 @@ type Opts struct {
 
 // RenderWithJsonnet uses the jsonnet render function to generate the docs, instead of the golang utilities.
 func RenderWithJsonnet(filename string, opts Opts) (map[string]string, error) {
+	// Write out the embedded doc-util to a tmp dir so that we can import it using the native jsonnet importer.
+	tmpdir, err := os.MkdirTemp("", "docsonnet-doc-util-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpdir)
+
+	if err := writeDocUtil(opts.EmbeddedFS, tmpdir); err != nil {
+		return nil, err
+	}
+
 	// get render.libsonnet from embedded data
 	render, err := opts.EmbeddedFS.ReadFile("render.libsonnet")
 	if err != nil {
@@ -25,10 +36,8 @@ func RenderWithJsonnet(filename string, opts Opts) (map[string]string, error) {
 	}
 
 	// setup Jsonnet vm
-	vm, err := newVM(filename, opts)
-	if err != nil {
-		return nil, err
-	}
+	jpaths := append(opts.JPath, tmpdir)
+	vm := newVM(filename, jpaths)
 
 	// invoke render.libsonnet
 	vm.ExtCode("d", `(import "doc-util/main.libsonnet")`)
@@ -59,6 +68,17 @@ func Load(filename string, opts Opts) (*Package, error) {
 // representation is usually not suitable for any use, use `Transform` to
 // convert it to the familiar docsonnet data model.
 func Extract(filename string, opts Opts) ([]byte, error) {
+	// Write out the embedded doc-util to a tmp dir so that we can import it using the native jsonnet importer.
+	tmpdir, err := os.MkdirTemp("", "docsonnet-doc-util-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpdir)
+
+	if err := writeDocUtil(opts.EmbeddedFS, tmpdir); err != nil {
+		return nil, err
+	}
+
 	// get load.libsonnet from embedded data
 	load, err := opts.EmbeddedFS.ReadFile("load.libsonnet")
 	if err != nil {
@@ -66,10 +86,8 @@ func Extract(filename string, opts Opts) ([]byte, error) {
 	}
 
 	// setup Jsonnet vm
-	vm, err := newVM(filename, opts)
-	if err != nil {
-		return nil, err
-	}
+	jpaths := append(opts.JPath, tmpdir)
+	vm := newVM(filename, jpaths)
 
 	// invoke load.libsonnet
 	data, err := vm.EvaluateAnonymousSnippet("load.libsonnet", string(load))
@@ -93,68 +111,39 @@ func Transform(data []byte) (*Package, error) {
 }
 
 // newVM sets up the Jsonnet VM with the importer that statically provides doc-util.
-func newVM(mainFName string, opts Opts) (*jsonnet.VM, error) {
+func newVM(mainFName string, jpaths []string) *jsonnet.VM {
 	vm := jsonnet.MakeVM()
-	imp, err := newImporter(opts)
-	if err != nil {
-		return nil, err
-	}
-	vm.Importer(imp)
+	vm.Importer(&jsonnet.FileImporter{JPaths: jpaths})
 	vm.ExtCode("main", fmt.Sprintf(`(import "%s")`, mainFName))
-	return vm, nil
+	return vm
 }
 
-// importer wraps jsonnet.FileImporter, to statically provide doc-util,
-// bundled with the binary
-type importer struct {
-	fi       jsonnet.FileImporter
-	embedded map[string]jsonnet.Contents
-}
+// writeDocUtil writes the embedded doc-util libsonnet package to disk so that Jsonnet can load it.
+func writeDocUtil(embedded embed.FS, tmpdir string) error {
+	rootDir := filepath.Join(tmpdir, "github.com/jsonnet-libs/docsonnet/doc-util")
+	if err := os.MkdirAll(rootDir, 0755); err != nil {
+		return err
+	}
+	spath := filepath.Join(tmpdir, "doc-util")
+	if err := os.Symlink(rootDir, spath); err != nil {
+		return err
+	}
 
-func newImporter(opts Opts) (*importer, error) {
-	dmain, err := opts.EmbeddedFS.ReadFile("doc-util/main.libsonnet")
+	dir, err := embedded.ReadDir("doc-util")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	drender, err := opts.EmbeddedFS.ReadFile("doc-util/render.libsonnet")
-	if err != nil {
-		return nil, err
-	}
-	embedded := map[string]jsonnet.Contents{
-		"main.libsonnet":   jsonnet.MakeContents(string(dmain)),
-		"render.libsonnet": jsonnet.MakeContents(string(drender)),
-	}
+	for _, f := range dir {
+		fpath := filepath.Join("doc-util", f.Name())
+		conts, err := embedded.ReadFile(fpath)
+		if err != nil {
+			return err
+		}
 
-	return &importer{
-		fi:       jsonnet.FileImporter{JPaths: opts.JPath},
-		embedded: embedded,
-	}, nil
-}
-
-var docUtilPathPrefixes = []string{
-	"doc-util/",
-	"github.com/jsonnet-libs/docsonnet/doc-util/",
-	"./render.libsonnet",
-}
-
-func (i *importer) Import(importedFrom, importedPath string) (contents jsonnet.Contents, foundAt string, err error) {
-	for _, p := range docUtilPathPrefixes {
-		if strings.HasPrefix(importedPath, p) {
-			return i.loadFromEmbed(importedPath)
+		outPath := filepath.Join(rootDir, f.Name())
+		if err := os.WriteFile(outPath, conts, 0644); err != nil {
+			return err
 		}
 	}
-
-	return i.fi.Import(importedFrom, importedPath)
-}
-
-func (i *importer) loadFromEmbed(importedPath string) (contents jsonnet.Contents, foundAt string, err error) {
-	fbase := filepath.Base(importedPath)
-	fpath := filepath.Join("doc-util", fbase)
-	loadPath := fmt.Sprintf("<internal>/%s", fpath)
-
-	conts, hasConts := i.embedded[fbase]
-	if !hasConts {
-		return jsonnet.Contents{}, loadPath, fmt.Errorf("%s does not exist", fpath)
-	}
-	return conts, loadPath, nil
+	return nil
 }
