@@ -3,8 +3,8 @@ package render
 import (
 	"testing"
 
-	"github.com/jsonnet-libs/docsonnet/pkg/docsonnet"
 	"github.com/stretchr/testify/assert"
+	"github.com/yorinasub17/docsonnet/pkg/docsonnet"
 )
 
 func TestSortFields(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/go-clix/cli"
 
-	"github.com/jsonnet-libs/docsonnet/pkg/docsonnet"
-	"github.com/jsonnet-libs/docsonnet/pkg/render"
+	"github.com/yorinasub17/docsonnet/pkg/docsonnet"
+	"github.com/yorinasub17/docsonnet/pkg/render"
 )
 
 var (

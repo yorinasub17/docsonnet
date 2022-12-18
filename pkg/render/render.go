@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/google/go-jsonnet/formatter"
-	"github.com/jsonnet-libs/docsonnet/pkg/docsonnet"
-	"github.com/jsonnet-libs/docsonnet/pkg/md"
-	"github.com/jsonnet-libs/docsonnet/pkg/slug"
+	"github.com/yorinasub17/docsonnet/pkg/docsonnet"
+	"github.com/yorinasub17/docsonnet/pkg/md"
+	"github.com/yorinasub17/docsonnet/pkg/slug"
 )
 
 type Opts struct {
